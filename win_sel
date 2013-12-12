@@ -18,8 +18,15 @@ if (/Frame extents:\s*([0-9]*),\s*([0-9]*),\s*([0-9]*),\s*([0-9]*)/) { print "fl
     }
 done >> /tmp/$$
 
-WINDOW=`cat /tmp/$$ | osd_box_sel -h`
-if [ -n "$WINDOW" ]; then
+R=`cat /tmp/$$ | osd_box_sel -h`
+if [ -n "$R" ]; then
+    read -a A <<EOF
+$R
+EOF
+    WINDOW=${A[0]}
+    X=${A[1]}
+    Y=${A[2]}
     xdotool windowfocus --sync $WINDOW windowraise $WINDOW
+    xdotool mousemove $X $Y
 fi
 rm /tmp/$$

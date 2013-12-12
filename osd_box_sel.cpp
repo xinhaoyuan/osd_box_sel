@@ -152,8 +152,10 @@ redraw_osd_boxes() {
             show_osd_box(box, 0x000000, 0xffffff);
             dis = box->lsx - cur_lx + box->lex - cur_lx;
             if (dis < 0) dis = -dis;
-            if (box_cd == NULL || dis < box_cd_dis)
+            if (box_cd == NULL || dis < box_cd_dis) {
+                box_cd_dis = dis;
                 box_cd = box;
+            }
         } else if (major_direction == 1 &&
                    box->x_covered) {
             show_osd_box(box, 0x000000, 0xffffff);
@@ -167,18 +169,21 @@ redraw_osd_boxes() {
 
     if (cur_box == NULL)
         cur_box = box_cd;
-    show_osd_box(cur_box, 0xffffff, 0x7f7f7f);
-    XRaiseWindow(dpy, cur_box->window);
 
-    int px = getv(x_points[cur_lx]);
-    int py = getv(y_points[cur_ly]);
+    if (cur_box) {
+        show_osd_box(cur_box, 0xffffff, 0x7f7f7f);
+        XRaiseWindow(dpy, cur_box->window);
+    }
+
+    cur_x = getv(x_points[cur_lx]);
+    cur_y = getv(y_points[cur_ly]);
 
     if (major_direction == 0)
-        XMoveWindow(dpy, wline, 0, py);
-    else XMoveWindow(dpy, wline, px, 0);
+        XMoveWindow(dpy, wline, 0, cur_y);
+    else XMoveWindow(dpy, wline, cur_x, 0);
     XRaiseWindow(dpy, wline);
     
-    XMoveWindow(dpy, wpointer, px - 2, py - 2);
+    XMoveWindow(dpy, wpointer, cur_x - 2, cur_y - 2);
     XRaiseWindow(dpy, wpointer);
 }
 
@@ -462,7 +467,7 @@ main(int argc, char **argv) {
             } else if (e.xkey.keycode == keycode_exit ||
                        e.xkey.keycode == keycode_enter) {
                 if (cur_box != NULL) {
-                    cout << *cur_box->id << endl;
+                    cout << *cur_box->id << ' ' << cur_x << ' ' << cur_y << endl;
                 }
                 goto cleanup_and_end;
             }
