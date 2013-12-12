@@ -11,12 +11,16 @@
 
 using namespace std;
 
+Display *dpy;
+Screen  *screen;
+int      screen_id;
+int      screen_width;
+int      screen_height;
+
 typedef struct osd_box_s {
-    Display *dpy;
     string *id;
     int x_covered;
     int y_covered;
-    int screen;
     int x, y;
     int width, height;
     int lsx, lsy, lex, ley;  // logical axis
@@ -35,7 +39,7 @@ int show_uncovered = 0;
 int major_direction = 0;
 
 void
-create_osd_box(osd_box_s *box, Display *dpy, int screen,
+create_osd_box(osd_box_s *box,
                int x, int y, int width, int height,
                int frame_size) {
     
@@ -44,7 +48,7 @@ create_osd_box(osd_box_s *box, Display *dpy, int screen,
     GC gc;
     attrs.override_redirect = True;
     attrs.background_pixel = 0x000000;
-    Window win = XCreateWindow(dpy, RootWindow(dpy, screen),
+    Window win = XCreateWindow(dpy, RootWindow(dpy, screen_id),
                                x, y, width, height, 0,
                                CopyFromParent, InputOutput,
                                CopyFromParent,
@@ -61,8 +65,6 @@ create_osd_box(osd_box_s *box, Display *dpy, int screen,
     XShapeCombineRectangles(dpy, win, ShapeBounding,
                             0, 0, &xrect, 1, ShapeSubtract, Unsorted);
 
-    box->dpy        = dpy;
-    box->screen     = screen;
     box->x          = x;
     box->y          = y;
     box->width      = width;
@@ -76,41 +78,42 @@ create_osd_box(osd_box_s *box, Display *dpy, int screen,
 
 void
 show_osd_box(osd_box_s *box, int bg, int fg) {
-    XSetWindowBackground(box->dpy, box->window, bg);
+    XSetWindowBackground(dpy, box->window, bg);
     if (box->mapped)
-        XClearWindow(box->dpy, box->window);
+        XClearWindow(dpy, box->window);
     else {
         box->mapped = 1;
-        XMapWindow(box->dpy, box->window);
+        XMapWindow(dpy, box->window);
     }
 
     GC gc;
     /* create a white gc */
-    gc = XCreateGC(box->dpy, box->window, 0, NULL);
-    XSetForeground(box->dpy, gc, fg);
+    gc = XCreateGC(dpy, box->window, 0, NULL);
+    XSetForeground(dpy, gc, fg);
 
     /* draw the outer white rectangle */
-    XDrawRectangle(box->dpy, box->window, gc,
+    XDrawRectangle(dpy, box->window, gc,
                    0, 0, box->width - 1, box->height - 1);
 
     /* draw the inner white rectangle */
-    XDrawRectangle(box->dpy, box->window, gc,
+    XDrawRectangle(dpy, box->window, gc,
                    box->frame_size - 1, box->frame_size - 1,
                    box->width - 2 * (box->frame_size - 1) - 1,
                    box->height - 2 * (box->frame_size - 1) - 1);
 
-    XFreeGC(box->dpy, gc);
+    XFreeGC(dpy, gc);
 }
 
 void
 hide_osd_box(osd_box_s *box) {
     if (box->mapped) {
         box->mapped = 0;
-        XUnmapWindow(box->dpy, box->window);
+        XUnmapWindow(dpy, box->window);
     }
 }
 
-Window pointer;
+Window wpointer;
+Window wline;
 vector<osd_box_s *> boxes;
 vector<interval_point_s *> x_points;
 vector<interval_point_s *> y_points;
@@ -134,6 +137,9 @@ point_cmp(interval_point_s *a, interval_point_s *b) {
 
 void
 redraw_osd_boxes() {
+    osd_box_s *box_cd = NULL;
+    int box_cd_dis;
+    int dis;
     for (int i = 0; i < boxes.size(); ++ i) {
         osd_box_s *box = boxes[i];
         box->x_covered = (box->lsx <= cur_lx &&
@@ -141,23 +147,39 @@ redraw_osd_boxes() {
         box->y_covered = (box->lsy <= cur_ly &&
                           cur_ly < box->ley);
         
-        if (box == cur_box) {
-            show_osd_box(box, 0xffffff, 0x7f7f7f);
-            XRaiseWindow(box->dpy, box->window);
-        } else if ((major_direction == 0 &&
-                    box->y_covered) ||
-                   (major_direction == 1 &&
-                    box->x_covered)) {
+        if (major_direction == 0 &&
+            box->y_covered) {
             show_osd_box(box, 0x000000, 0xffffff);
+            dis = box->lsx - cur_lx + box->lex - cur_lx;
+            if (dis < 0) dis = -dis;
+            if (box_cd == NULL || dis < box_cd_dis)
+                box_cd = box;
+        } else if (major_direction == 1 &&
+                   box->x_covered) {
+            show_osd_box(box, 0x000000, 0xffffff);
+            if (dis < 0) dis = -dis;
+            if (box_cd == NULL || dis < box_cd_dis)
+                box_cd = box;
         } else if (show_uncovered)
             show_osd_box(box, 0x7f7f7f, 0xffffff);
         else hide_osd_box(box);
     }
 
+    if (cur_box == NULL)
+        cur_box = box_cd;
+    show_osd_box(cur_box, 0xffffff, 0x7f7f7f);
+    XRaiseWindow(dpy, cur_box->window);
+
     int px = getv(x_points[cur_lx]);
     int py = getv(y_points[cur_ly]);
-    XMoveWindow(boxes[0]->dpy, pointer, px - 2, py - 2);
-    XRaiseWindow(boxes[0]->dpy, pointer);
+
+    if (major_direction == 0)
+        XMoveWindow(dpy, wline, 0, py);
+    else XMoveWindow(dpy, wline, px, 0);
+    XRaiseWindow(dpy, wline);
+    
+    XMoveWindow(dpy, wpointer, px - 2, py - 2);
+    XRaiseWindow(dpy, wpointer);
 }
 
 int
@@ -261,18 +283,21 @@ main(int argc, char **argv) {
         }
     }
     
+    dpy                    = XOpenDisplay(NULL);
+    screen_id              = DefaultScreen(dpy);
+    screen                 = ScreenOfDisplay(dpy, screen_id);
+    screen_width           = WidthOfScreen(screen);
+    screen_height          = HeightOfScreen(screen);
     
-    int ret                = 0;
-    Display *d             = XOpenDisplay(NULL);
-    int s                  = DefaultScreen(d);
-    int keycode_up         = XKeysymToKeycode(d, XK_Up);
-    int keycode_down       = XKeysymToKeycode(d, XK_Down);
-    int keycode_left       = XKeysymToKeycode(d, XK_Left);
-    int keycode_right      = XKeysymToKeycode(d, XK_Right);
-    int keycode_exit       = XKeysymToKeycode(d, XK_Escape);
-    int keycode_enter      = XKeysymToKeycode(d, XK_Return);
+    int ret                = 0;    
+    int keycode_up         = XKeysymToKeycode(dpy, XK_Up);
+    int keycode_down       = XKeysymToKeycode(dpy, XK_Down);
+    int keycode_left       = XKeysymToKeycode(dpy, XK_Left);
+    int keycode_right      = XKeysymToKeycode(dpy, XK_Right);
+    int keycode_exit       = XKeysymToKeycode(dpy, XK_Escape);
+    int keycode_enter      = XKeysymToKeycode(dpy, XK_Return);
     unsigned int modifiers = AnyModifier;
-    Window root            = DefaultRootWindow(d);
+    Window root            = DefaultRootWindow(dpy);
     
     bool b;
     string line;
@@ -316,7 +341,7 @@ main(int argc, char **argv) {
             y_exit->dir = 1;
             y_exit->entry = 0;
 
-            create_osd_box(box, d, s, x, y, w, h, 4);
+            create_osd_box(box, x, y, w, h, 4);
             box->id = new string(id);
 
             boxes.push_back(box);
@@ -348,25 +373,25 @@ main(int argc, char **argv) {
         else y_points[i]->box->ley = i;
     }
 
-    XGrabKey(d, keycode_up, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_down, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_left, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_right, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_up, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_down, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_left, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_right, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_up, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_down, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_left, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_right, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_up, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_down, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_left, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_right, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_exit, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XGrabKey(d, keycode_enter, 0, root, false, GrabModeAsync, GrabModeAsync);
-    XSelectInput(d, root, KeyPressMask);
+    XGrabKey(dpy, keycode_up, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_down, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_left, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_right, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_up, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_down, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_left, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_right, ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_up, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_down, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_left, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_right, ControlMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_up, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_down, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_left, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_right, ControlMask | ShiftMask, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_exit, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, keycode_enter, 0, root, false, GrabModeAsync, GrabModeAsync);
+    XSelectInput(dpy, root, KeyPressMask);
 
     for (i = 0; i < x_points.size(); ++ i) {
         int x = getv(x_points[i]);
@@ -389,20 +414,37 @@ main(int argc, char **argv) {
     attrs.override_redirect = True;
     attrs.background_pixel = 0x000000;
     attrs.border_pixel = 0xee6600;
-    pointer = XCreateWindow(d, RootWindow(d, s),
+    wpointer = XCreateWindow(dpy, RootWindow(dpy, screen_id),
                             0, 0, 3, 3, 2,
                             CopyFromParent, InputOutput,
                             CopyFromParent,
                             CWOverrideRedirect | CWBackPixel | CWBorderPixel,
                             &attrs);
+
+    if (major_direction == 0) {
+        wline = XCreateWindow(dpy, RootWindow(dpy, screen_id),
+                              0, 0, screen_width - 2, 1, 1,
+                              CopyFromParent, InputOutput,
+                              CopyFromParent,
+                              CWOverrideRedirect | CWBackPixel | CWBorderPixel,
+                              &attrs);
+    } else {
+        wline = XCreateWindow(dpy, RootWindow(dpy, screen_id),
+                              0, 0, 1, screen_height - 2, 1,
+                              CopyFromParent, InputOutput,
+                              CopyFromParent,
+                              CWOverrideRedirect | CWBackPixel | CWBorderPixel,
+                              &attrs);
+    }
     
     redraw_osd_boxes();
 
-    XMapWindow(d, pointer);
+    XMapWindow(dpy, wpointer);
+    XMapWindow(dpy, wline);
     
     XEvent e; 
     while (1) {
-        XNextEvent(d, &e);
+        XNextEvent(dpy, &e);
         switch(e.type)
         {
         case KeyPress: {
@@ -433,6 +475,6 @@ main(int argc, char **argv) {
 
   cleanup_and_end:
   end:
-    XCloseDisplay(d);
+    XCloseDisplay(dpy);
     return ret;
 }
